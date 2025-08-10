@@ -3,7 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/m4rk1sov/rbk-api/internal/models"
+	"github.com/m4rk1sov/rbk-api/internal/domain/models"
 	"io"
 	"net/http"
 	"strings"
@@ -13,7 +13,7 @@ import (
 const baseURL = "https://wger.de/api/v2"
 
 func GetMuscleID(muscleName string) (int, error) {
-	url := baseURL + "/muscle"
+	url := baseURL + "/muscle/"
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -25,18 +25,18 @@ func GetMuscleID(muscleName string) (int, error) {
 			return
 		}
 	}(resp.Body)
-	
+
 	var data models.MuscleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return 0, err
 	}
-	
+
 	for _, m := range data.Results {
 		if strings.EqualFold(m.Name, muscleName) {
 			return m.ID, nil
 		}
 	}
-	
+
 	return 0, fmt.Errorf("muscle not found")
 }
 
@@ -47,18 +47,18 @@ func GetExercisesByMuscle(muscleID int) ([]models.Exercise, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	defer func(Body io.ReadCloser) {
 		err := resp.Body.Close()
 		if err != nil {
 			return
 		}
 	}(resp.Body)
-	
+
 	var data models.ExerciseResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
-	
+
 	return data.Results, nil
 }
