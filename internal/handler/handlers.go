@@ -1,7 +1,8 @@
 package handler
 
 import (
-	"encoding/json"
+	"fmt"
+	//"encoding/json"
 	"github.com/go-chi/chi/v5"
 	"github.com/m4rk1sov/rbk-api/internal/domain/models"
 	"github.com/m4rk1sov/rbk-api/internal/service"
@@ -15,13 +16,13 @@ func HandleFitness(w http.ResponseWriter, r *http.Request) {
 
 	muscleID, err := service.GetMuscleID(muscle)
 	if err != nil {
-		http.Error(w, "Muscle not found", http.StatusNotFound)
+		util.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "Muscle not found"})
 		return
 	}
 
 	exercises, err := service.GetExercisesByMuscle(muscleID)
 	if err != nil {
-		http.Error(w, "Failed to fetch exercises", http.StatusInternalServerError)
+		util.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch the exercises"})
 		return
 	}
 
@@ -38,12 +39,22 @@ func HandleFitness(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"muscle":         muscle,
 		"exercises":      cleaned,
-		"advice":         "Stay hydrated!",
-		"similarMuscles": []string{"forearms", "brachialis"},
+		"advice":         service.GetAdvice(),
+		"similarMuscles": service.GetSimilarMuscles(muscle),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(resp)
+	util.WriteJSON(w, http.StatusOK, resp)
+
+	//w.Header().Set("Content-Type", "application/json")
+	//err = json.NewEncoder(w).Encode(resp)
+	//if err != nil {
+	//	return
+	//}
+}
+
+func ListAvailable(w http.ResponseWriter, r *http.Request) {
+	//todo list available commands
+	_, err := fmt.Fprintf(w, "list of all commands")
 	if err != nil {
 		return
 	}

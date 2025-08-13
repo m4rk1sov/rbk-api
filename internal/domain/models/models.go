@@ -23,3 +23,7 @@ type ExerciseOut struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
+
+type AdviceResponse struct {
+	Advice string `json:"advice"`
+}
