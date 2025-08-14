@@ -1,26 +1,29 @@
 package main
 
 import (
-	"database/sql"
 	"errors"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
 	"github.com/m4rk1sov/rbk-api/internal/handler"
 	"github.com/m4rk1sov/rbk-api/internal/repository"
+	"github.com/m4rk1sov/rbk-api/internal/service"
 	"github.com/m4rk1sov/rbk-api/pkg/jsonlog"
 	"io"
 	"log"
 	_ "modernc.org/sqlite"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
 func main() {
-	if err := godotenv.Load(".env"); err != nil {
-		log.Printf("failed to open .env file: %v\n", err)
-	}
+	_ = godotenv.Load()
+
+	addr := getenv("ADDR", ":8080")
+	wgerBase := getenv("WGER_BASE_URL", "https://wger.de/api/v2")
+	lang := getenvInt("WGER_LANGUAGE", 2)
+	ua := getenv("HTTP_USER_AGENT", "rbk-api/1.0 (+https://github.com/m4rk1sov/rbk-api)")
+	similarPath := getenv("SIMILAR_MUSCLES_FILE", "./similar_muscles.json")
 
 	logFile, err := os.OpenFile("logs.txt", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 	if err != nil {
@@ -35,54 +38,29 @@ func main() {
 
 	logger := jsonlog.New(io.MultiWriter(os.Stdout, logFile), jsonlog.LevelInfo)
 
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "./data.db"
-	}
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	client := repository.NewWgerClient(httpClient, wgerBase, lang, ua)
+	svc := service.NewFitnessService(client, logger, similarPath)
+	h := handler.New(svc, logger)
 
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		logger.PrintError("failed to connect to sqlite database", map[string]string{"error": err.Error()})
+	logger.PrintInfo("starting server", map[string]string{"addr": addr})
+	if err := http.ListenAndServe(addr, h.Router()); err != nil {
+		log.Fatal(err)
 	}
-	defer func(db *sql.DB) {
-		if closeErr := db.Close(); closeErr != nil {
-			logger.PrintError("failed to close database connection", map[string]string{"error": err.Error()})
-			err = errors.Join(err, closeErr)
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getenvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
 		}
-	}(db)
-
-	repo := repository.NewFitnessRepo(db)
-	err = repo.InitTables(db)
-	if err != nil {
-		logger.PrintError("failed to create tables", map[string]string{"error": err.Error()})
 	}
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	// init router
-	r := chi.NewRouter()
-	r.Use(repository.RequestLogger(logger))
-	r.Use(middleware.Recoverer)
-
-	// routes
-	r.Get("/fitness/{muscle}", handler.HandleFitness(repo, logger))
-	r.Get("/fitness/", handler.ListAvailable)
-
-	// server
-	srv := http.Server{
-		Handler:      r,
-		Addr:         "localhost:" + port,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	if err = srv.ListenAndServe(); err != nil {
-		logger.PrintFatal("failed to launch the server", map[string]string{"error": err.Error()})
-	} else {
-		logger.PrintInfo("server running on port: %s", map[string]string{"port": port})
-	}
+	return fallback
 }

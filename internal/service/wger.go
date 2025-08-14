@@ -1,127 +1,200 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/m4rk1sov/rbk-api/internal/domain/models"
-	"io"
-	"net/http"
+	"github.com/m4rk1sov/rbk-api/internal/repository"
+	"github.com/m4rk1sov/rbk-api/pkg/jsonlog"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// url link for API, wger
-// 2 options, 1st: var init with .env; 2nd: const init
-//var wgerURL = os.Getenv("WGER_URL")
-
-const wgerURL = "https://wger.de/api/v2"
-
-var httpClientWger = &http.Client{Timeout: 10 * time.Second}
-var cache = sync.Map{} // key:value
-
-type cacheEntry struct {
-	data      interface{}
-	timestamp time.Time
+type FitnessService struct {
+	client         *repository.WgerClient
+	logger         *jsonlog.Logger
+	similarMuscles map[string][]string
+	cacheMu        sync.RWMutex
+	cache          map[string]cacheItem
+	ttl            time.Duration
 }
 
-func cacheGet(key string) (interface{}, bool) {
-	if v, ok := cache.Load(key); ok {
-		entry := v.(cacheEntry)
-		if time.Since(entry.timestamp) < 5*time.Minute {
-			return entry.data, true
-		}
+type cacheItem struct {
+	expiresAt time.Time
+	data      []models.Exercise
+}
+
+func NewFitnessService(client *repository.WgerClient, logger *jsonlog.Logger, similarFile string) *FitnessService {
+	fs := &FitnessService{
+		client: client,
+		logger: logger,
+		cache:  make(map[string]cacheItem),
+		ttl:    5 * time.Minute,
 	}
-	return nil, false
+	fs.similarMuscles = fs.loadSimilar(similarFile)
+	return fs
 }
 
-func cacheSet(key string, value interface{}) {
-	cache.Store(key, cacheEntry{data: value, timestamp: time.Now().Local()})
-}
-
-func GetMuscleID(muscleName string) (int, error) {
-	if v, ok := cacheGet("muscles"); ok {
-		return findMuscleID(v.([]models.Muscle), muscleName)
+func (s *FitnessService) loadSimilar(path string) map[string][]string {
+	if path == "" {
+		path = "./similar_muscles.json"
 	}
-
-	url := wgerURL + "/muscle/"
-	resp, err := httpClientWger.Get(url)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return 0, err
-	}
-	defer func(Body io.ReadCloser) {
-		if closeErr := Body.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-			return
-		}
-	}(resp.Body)
-
-	var data models.MuscleResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return 0, err
-	}
-
-	cacheSet("muscles", data.Results)
-	return findMuscleID(data.Results, muscleName)
-}
-
-func findMuscleID(muscles []models.Muscle, muscleName string) (int, error) {
-	for _, m := range muscles {
-		if strings.EqualFold(m.Name, muscleName) {
-			return m.ID, nil
+		// fallback defaults for a few common groups
+		return map[string][]string{
+			"chest":      {"triceps", "shoulders"},
+			"back":       {"biceps", "forearms"},
+			"biceps":     {"forearms", "back"},
+			"triceps":    {"chest", "shoulders"},
+			"legs":       {"glutes", "calves"},
+			"shoulders":  {"triceps", "chest"},
+			"abs":        {"obliques", "lower back"},
+			"hamstrings": {"glutes", "lower back"},
+			"quads":      {"glutes", "hamstrings"},
 		}
 	}
-
-	return 0, fmt.Errorf("muscle not found")
-}
-
-func GetExercisesByMuscle(muscleID int) ([]models.ExerciseInfo, error) {
-	cacheKey := fmt.Sprintf("exercises_%d", muscleID)
-	if v, ok := cacheGet(cacheKey); ok {
-		return v.([]models.ExerciseInfo), nil
-	}
-
-	url := fmt.Sprintf("%s/exerciseinfo/?muscles=%d&language=2&status=2", wgerURL, muscleID)
-	resp, err := httpClientWger.Get(url)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func(Body io.ReadCloser) {
-		if closeErr := resp.Body.Close(); closeErr != nil {
+	defer func(f *os.File) {
+		if closeErr := f.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
-	}(resp.Body)
-
-	var data models.ExerciseInfoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, err
+	}(f)
+	var m map[string][]string
+	if err := json.NewDecoder(f).Decode(&m); err != nil {
+		return map[string][]string{}
 	}
-
-	cacheSet(cacheKey, data.Results)
-	return data.Results, nil
+	return m
 }
 
-func GetSimilarMuscles(muscleName string) (res []string) {
-	similar := map[string][]string{}
-	data, err := os.ReadFile("./similar_muscles.json")
-	if err != nil {
-		return nil
-	}
-	err = json.Unmarshal(data, &similar)
-	if err != nil {
-		return nil
-	}
-	if v, ok := similar[strings.ToLower(muscleName)]; ok {
-		return v
-	}
-	return nil
+// list of muscles
+var muscleNameToIDs = map[string][]int{
+	"biceps":     {1},
+	"shoulders":  {2},
+	"chest":      {4},
+	"triceps":    {5},
+	"abs":        {6},
+	"calves":     {7},
+	"glutes":     {8},
+	"quadriceps": {10},
+	"quads":      {10},
+	"hamstrings": {11},
+	"lats":       {12},
+	"lower back": {13},
+	"trapezius":  {14},
+	"forearms":   {9},
+	"neck":       {3},
+	"back":       {12, 13, 14}, // aggregate
 }
 
-//"biceps":  {"forearms", "brachialis"},
-//		"triceps": {"shoulders", "chest"},
-//		"quads":   {"hamstrings", "glutes", "soleus"},
-//		"lats":    {"trapezius", "serratus anterior"},
-//		"abs":     {"rectus abdominis", "obliquus externus abdominis"},
+// GetExercisesByMuscle fetches exercises and returns a domain response with advice and similar groups.
+func (s *FitnessService) GetExercisesByMuscle(ctx context.Context, muscle string, limit int) (models.ExercisesResponse, error) {
+	muscleKey := strings.ToLower(strings.TrimSpace(muscle))
+	ids, ok := muscleNameToIDs[muscleKey]
+	if !ok {
+		// allow passing raw numeric id(s) comma-separated
+		if csvIDs, err := parseIDsCSV(muscleKey); err == nil && len(csvIDs) > 0 {
+			ids = csvIDs
+		} else {
+			return models.ExercisesResponse{}, errors.New("unknown muscle group; try one of: chest, back, biceps, triceps, shoulders, quads, hamstrings, calves, abs")
+		}
+	}
+	
+	cacheKey := cacheKeyFor(muscleKey, limit)
+	if data, ok := s.getCache(cacheKey); ok {
+		return models.ExercisesResponse{
+			Muscle:         muscleKey,
+			Exercises:      data,
+			SimilarMuscles: s.similarMuscles[muscleKey],
+			Advice:         s.makeAdvice(data),
+		}, nil
+	}
+	
+	data, err := s.client.FetchExercises(ctx, ids, limit)
+	if err != nil {
+		return models.ExercisesResponse{}, err
+	}
+	s.setCache(cacheKey, data)
+	
+	return models.ExercisesResponse{
+		Muscle:         muscleKey,
+		Exercises:      data,
+		SimilarMuscles: s.similarMuscles[muscleKey],
+		Advice:         s.makeAdvice(data),
+	}, nil
+}
+
+func (s *FitnessService) makeAdvice(exs []models.Exercise) string {
+	// Very simple heuristic advices:
+	if len(exs) == 0 {
+		return "Try broad compound movements and re-check your filters."
+	}
+	// If many exercises hit secondary muscles, suggest warm-up/isolation
+	secondaryHeavy := 0
+	for _, e := range exs {
+		if len(e.MusclesSecondary) > 0 {
+			secondaryHeavy++
+		}
+	}
+	if secondaryHeavy > len(exs)/2 {
+		return "Include specific warm-up sets and isolation moves before compounds."
+	}
+	return "Balance compounds with accessory work; keep proper form."
+}
+
+func cacheKeyFor(muscle string, limit int) string {
+	return muscle + ":" + strconv.Itoa(limit)
+}
+
+func (s *FitnessService) getCache(key string) ([]models.Exercise, bool) {
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	item, ok := s.cache[key]
+	if !ok || time.Now().After(item.expiresAt) {
+		return nil, false
+	}
+	return item.data, true
+}
+
+func (s *FitnessService) setCache(key string, data []models.Exercise) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	s.cache[key] = cacheItem{
+		expiresAt: time.Now().Add(s.ttl),
+		data:      data,
+	}
+}
+
+func parseIDsCSV(s string) ([]int, error) {
+	if s == "" {
+		return nil, errors.New("empty")
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+func GetAvailableMuscles() []string {
+	names := make([]string, 0, len(muscleNameToIDs))
+	for name := range muscleNameToIDs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

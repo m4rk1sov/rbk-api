@@ -1,36 +1,20 @@
 package models
 
-type Muscle struct {
-	ID   int    `json:"id"`
-	Name string `json:"name_en"`
+type Exercise struct {
+	ID               int    `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Category         int    `json:"category"`
+	Muscles          []int  `json:"muscles"`
+	MusclesSecondary []int  `json:"muscles_secondary"`
+	Equipment        []int  `json:"equipment"`
 }
 
-type MuscleResponse struct {
-	Results []Muscle `json:"results"`
-}
-
-type Equipment struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
-
-type ExerciseInfo struct {
-	ID          int         `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Equipment   []Equipment `json:"equipment"`
-	Images      []struct {
-		Image string `json:"image"`
-	} `json:"images"`
-}
-
-type ExerciseInfoResponse struct {
-	Results []ExerciseInfo `json:"results"`
-}
-
-type ExerciseOut struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+type ExercisesResponse struct {
+	Muscle         string     `json:"muscle"`
+	Exercises      []Exercise `json:"exercises"`
+	SimilarMuscles []string   `json:"similar_muscles,omitempty"`
+	Advice         string     `json:"advice,omitempty"`
 }
 
 type AdviceSlip struct {

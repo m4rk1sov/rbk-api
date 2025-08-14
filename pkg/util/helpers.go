@@ -11,10 +11,10 @@ func StripHTML(input string) string {
 	return re.ReplaceAllString(input, "")
 }
 
-func WriteJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+func WriteJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	err := json.NewEncoder(w).Encode(data)
+	err := json.NewEncoder(w).Encode(v)
 	if err != nil {
 		return
 	}

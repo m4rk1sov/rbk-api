@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// var adviceURL = os.Getenv("ADVICE_URL")
 const adviceURL = "https://api.adviceslip.com/advice"
 
 var httpClientAdvice = &http.Client{Timeout: 10 * time.Second}

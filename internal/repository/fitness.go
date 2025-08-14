@@ -1,84 +1,174 @@
 package repository
 
 import (
-	"database/sql"
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/m4rk1sov/rbk-api/internal/domain/models"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-type FitnessRepo struct {
-	DB *sql.DB
+type WgerClient struct {
+	httpClient *http.Client
+	baseURL    string
+	language   int
+	userAgent  string
 }
 
-func NewFitnessRepo(db *sql.DB) *FitnessRepo {
-	return &FitnessRepo{DB: db}
+func NewWgerClient(httpClient *http.Client, baseURL string, language int, userAgent string) *WgerClient {
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 60 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		}
+	}
+	if baseURL == "" {
+		baseURL = "https://wger.de/api/v2"
+	}
+	if language == 0 {
+		language = 2
+	}
+	if userAgent == "" {
+		userAgent = "rbk-api/1.0 (+https://github.com/m4rk1sov/rbk-api)"
+	}
+	return &WgerClient{
+		httpClient: httpClient,
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		language:   language,
+		userAgent:  userAgent,
+	}
 }
 
-func (r *FitnessRepo) InitTables(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS requests_history (
-		    id INTEGER PRIMARY KEY,
-		    muscle TEXT NOT NULL,
-		    requested_at TIMESTAMP NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS muscle_cache (
-		    muscle TEXT PRIMARY KEY,
-		    data TEXT NOT NULL,
-		    fetched_at TIMESTAMP NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS exercises (
-       		id INTEGER PRIMARY KEY,
-       		muscle_id INTEGER,
-       		name TEXT,
-       		description TEXT,
-       		equipment
-   		);
-`)
-	return err
+type wgerExercise struct {
+	ID               int    `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Category         int    `json:"category"`
+	Muscles          []int  `json:"muscles"`
+	MusclesSecondary []int  `json:"muscles_secondary"`
+	Equipment        []int  `json:"equipment"`
 }
 
-func (r *FitnessRepo) SaveRequest(muscle string) error {
-	_, err := r.DB.Exec(`
-		INSERT INTO requests_history (muscle, requested_at)
-		VALUES (?, ?)`, muscle, time.Now().Local())
-	return err
+type wgerPagedResponse struct {
+	Count    int            `json:"count"`
+	Next     *string        `json:"next"`
+	Previous *string        `json:"previous"`
+	Results  []wgerExercise `json:"results"`
 }
 
-func (r *FitnessRepo) GetCachedMuscle(muscle string, ttl time.Duration) (string, bool, error) {
-	var data string
-	var fetchedAt time.Time
-
-	err := r.DB.QueryRow(
-		`SELECT data, fetched_at FROM muscle_cache WHERE muscle = ?`,
-		muscle,
-	).Scan(&data, &fetchedAt)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+// FetchExercises fetches from primary and secondary muscles and merges results (deduplicated by ID).
+func (c *WgerClient) FetchExercises(ctx context.Context, muscles []int, limit int) ([]models.Exercise, error) {
+	if len(muscles) == 0 {
+		return nil, errors.New("no muscles provided")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
 	}
 
+	// Helper to call endpoint with given query
+	call := func(param string, muscleIDs []int) ([]wgerExercise, error) {
+		u, err := url.Parse(c.baseURL + "/exercise/")
+		if err != nil {
+			return nil, err
+		}
+
+		q := u.Query()
+		q.Set("language", strconv.Itoa(c.language))
+		q.Set("limit", strconv.Itoa(limit))
+		// wger supports filter by 'muscles' and 'muscles_secondary'
+		q.Set(param, intsToCSV(muscleIDs))
+		u.RawQuery = q.Encode()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", c.userAgent)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer func(Body io.ReadCloser) {
+			if closeErr := Body.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}(resp.Body)
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("wger returned %d", resp.StatusCode)
+		}
+
+		var pr wgerPagedResponse
+		if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+			return nil, err
+		}
+		return pr.Results, nil
+	}
+
+	primary, err := call("muscles", muscles)
 	if err != nil {
-		return "", false, err
+		return nil, err
+	}
+	secondary, err := call("muscles_secondary", muscles)
+	if err != nil {
+		// secondary may be empty
+		return nil, err
 	}
 
-	if time.Since(fetchedAt) <= ttl {
-		return data, true, nil
+	merged := make(map[int]wgerExercise, len(primary)+len(secondary))
+	for _, e := range primary {
+		merged[e.ID] = e
+	}
+	for _, e := range secondary {
+		merged[e.ID] = e
 	}
 
-	return "", false, nil
+	out := make([]models.Exercise, 0, len(merged))
+	for _, e := range merged {
+		out = append(out, models.Exercise{
+			ID:               e.ID,
+			Name:             e.Name,
+			Description:      e.Description,
+			Category:         e.Category,
+			Muscles:          e.Muscles,
+			MusclesSecondary: e.MusclesSecondary,
+			Equipment:        e.Equipment,
+		})
+	}
+	return out, nil
 }
 
-func (r *FitnessRepo) SaveMuscleCache(muscle, data string) error {
-	_, err := r.DB.Exec(`
-		INSERT INTO muscle_cache (muscle, data, fetched_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(muscle) DO UPDATE SET
-		           data = excluded.data,
-		           fetched_at = excluded.fetched_at
-`, muscle, data, time.Now())
-	return err
+func intsToCSV(v []int) string {
+	if len(v) == 0 {
+		return ""
+	}
+	sb := strings.Builder{}
+	for i, n := range v {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(strconv.Itoa(n))
+	}
+	return sb.String()
 }

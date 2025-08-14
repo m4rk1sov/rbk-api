@@ -1,0 +1,153 @@
+openapi: 3.0.3
+info:
+  title: RBK Fitness API
+  version: 1.1.0
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: System
+  - name: Exercises
+  - name: Advice
+paths:
+  /healthz:
+    get:
+      tags: [System]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /exercises:
+    get:
+      tags: [Exercises]
+      summary: List available muscles
+      responses:
+        '200':
+          description: Available muscle names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MusclesList'
+  /exercises/{muscle}:
+    get:
+      tags: [Exercises]
+      summary: Get exercises by muscle name or IDs
+      parameters:
+        - in: path
+          name: muscle
+          schema:
+            type: string
+          required: true
+          description: Muscle name (e.g., chest) or comma-separated Wger muscle IDs (e.g., 4,10)
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Exercise list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExercisesResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /advice:
+    get:
+      tags: [Advice]
+      summary: Get general advice (positive mind - key to success)
+      responses:
+        '200':
+          description: Advice text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Advice'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        uptime:
+          type: string
+          example: 2m34.123s
+        service:
+          type: string
+          example: rbk-api
+    MusclesList:
+      type: object
+      properties:
+        muscles:
+          type: array
+          items:
+            type: string
+          example: ["biceps", "triceps", "chest"]
+    Exercise:
+      type: object
+      properties:
+        id: { type: integer, example: 345 }
+        name: { type: string, example: Barbell Bench Press }
+        description: { type: string, example: Lie back on a flat bench and press the barbell... }
+        category: { type: integer, example: 4 }
+        muscles:
+          type: array
+          items: { type: integer }
+          example: [4]
+        muscles_secondary:
+          type: array
+          items: { type: integer }
+          example: [5,2]
+        equipment:
+          type: array
+          items: { type: integer }
+          example: [1]
+    ExercisesResponse:
+      type: object
+      properties:
+        muscle:
+          type: string
+          example: chest
+        exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/Exercise'
+        similarMuscles:
+          type: array
+          items:
+            type: string
+          example: ["triceps", "shoulders"]
+        advice:
+          type: string
+          example: Balance pushing and pulling movements across the week.
+    Advice:
+      type: object
+      properties:
+        advice:
+          type: string
+          example: Focus on compound lifts first and keep progressive overload consistent.
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: invalid muscle parameter
