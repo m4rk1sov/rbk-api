@@ -45,7 +45,7 @@ func GetMuscleID(muscleName string) (int, error) {
 	if v, ok := cacheGet("muscles"); ok {
 		return findMuscleID(v.([]models.Muscle), muscleName)
 	}
-	
+
 	url := wgerURL + "/muscle/"
 	resp, err := httpClientWger.Get(url)
 	if err != nil {
@@ -57,12 +57,12 @@ func GetMuscleID(muscleName string) (int, error) {
 			return
 		}
 	}(resp.Body)
-	
+
 	var data models.MuscleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return 0, err
 	}
-	
+
 	cacheSet("muscles", data.Results)
 	return findMuscleID(data.Results, muscleName)
 }
@@ -73,42 +73,40 @@ func findMuscleID(muscles []models.Muscle, muscleName string) (int, error) {
 			return m.ID, nil
 		}
 	}
-	
+
 	return 0, fmt.Errorf("muscle not found")
 }
 
-func GetExercisesByMuscle(muscleID int) ([]models.Exercise, error) {
+func GetExercisesByMuscle(muscleID int) ([]models.ExerciseInfo, error) {
 	cacheKey := fmt.Sprintf("exercises_%d", muscleID)
 	if v, ok := cacheGet(cacheKey); ok {
-		return v.([]models.Exercise), nil
+		return v.([]models.ExerciseInfo), nil
 	}
-	
-	url := fmt.Sprintf("%s/exercise/?muscles=%d&language=2&status=2", wgerURL, muscleID)
-	client := http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(url)
+
+	url := fmt.Sprintf("%s/exerciseinfo/?muscles=%d&language=2&status=2", wgerURL, muscleID)
+	resp, err := httpClientWger.Get(url)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	defer func(Body io.ReadCloser) {
-		err := resp.Body.Close()
-		if err != nil {
-			return
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
 	}(resp.Body)
-	
-	var data models.ExerciseResponse
+
+	var data models.ExerciseInfoResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
-	
+
 	cacheSet(cacheKey, data.Results)
 	return data.Results, nil
 }
 
 func GetSimilarMuscles(muscleName string) (res []string) {
 	similar := map[string][]string{}
-	data, err := os.ReadFile("similar_muscles.json")
+	data, err := os.ReadFile("./similar_muscles.json")
 	if err != nil {
 		return nil
 	}

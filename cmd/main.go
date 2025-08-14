@@ -82,6 +82,7 @@ func main() {
 
 	if err = srv.ListenAndServe(); err != nil {
 		logger.PrintFatal("failed to launch the server", map[string]string{"error": err.Error()})
+	} else {
+		logger.PrintInfo("server running on port: %s", map[string]string{"port": port})
 	}
-	logger.PrintInfo("server running on port: %s", map[string]string{"port": port})
 }

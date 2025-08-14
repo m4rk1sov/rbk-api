@@ -26,10 +26,17 @@ func GetAdvice() string {
 		}
 	}(resp.Body)
 	
+	if resp.StatusCode != http.StatusOK {
+		return fail
+	}
+	
 	var data models.AdviceResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return fail
 	}
+	if data.Slip.Advice == "" {
+		return fail
+	}
 	
-	return data.Advice
+	return data.Slip.Advice
 }

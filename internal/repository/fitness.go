@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-	
+
 	_ "modernc.org/sqlite"
 )
 
@@ -29,6 +29,14 @@ func (r *FitnessRepo) InitTables(db *sql.DB) error {
 		    data TEXT NOT NULL,
 		    fetched_at TIMESTAMP NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS exercises (
+       		id INTEGER PRIMARY KEY,
+       		muscle_id INTEGER,
+       		name TEXT,
+       		description TEXT,
+       		equipment
+   		);
 `)
 	return err
 }
@@ -43,24 +51,24 @@ func (r *FitnessRepo) SaveRequest(muscle string) error {
 func (r *FitnessRepo) GetCachedMuscle(muscle string, ttl time.Duration) (string, bool, error) {
 	var data string
 	var fetchedAt time.Time
-	
+
 	err := r.DB.QueryRow(
 		`SELECT data, fetched_at FROM muscle_cache WHERE muscle = ?`,
 		muscle,
 	).Scan(&data, &fetchedAt)
-	
+
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
-	
+
 	if err != nil {
 		return "", false, err
 	}
-	
+
 	if time.Since(fetchedAt) <= ttl {
 		return data, true, nil
 	}
-	
+
 	return "", false, nil
 }
 
