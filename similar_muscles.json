@@ -1,0 +1,7 @@
+{
+  "biceps":  ["forearms", "brachialis"],
+  "triceps": ["shoulders", "chest"],
+  "quads":   ["hamstrings", "glutes", "soleus"],
+  "lats":    ["trapezius", "serratus anterior"],
+  "abs":     ["rectus abdominis", "obliquus externus abdominis"]
+}

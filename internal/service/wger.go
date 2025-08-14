@@ -15,11 +15,11 @@ import (
 
 // url link for API, wger
 // 2 options, 1st: var init with .env; 2nd: const init
-var wgerURL = os.Getenv("WGER_URL")
+//var wgerURL = os.Getenv("WGER_URL")
 
-//const wgerURL = "https://wger.de/api/v2"
+const wgerURL = "https://wger.de/api/v2"
 
-var httpClient = &http.Client{Timeout: 5 * time.Second}
+var httpClientWger = &http.Client{Timeout: 10 * time.Second}
 var cache = sync.Map{} // key:value
 
 type cacheEntry struct {
@@ -45,9 +45,9 @@ func GetMuscleID(muscleName string) (int, error) {
 	if v, ok := cacheGet("muscles"); ok {
 		return findMuscleID(v.([]models.Muscle), muscleName)
 	}
-
+	
 	url := wgerURL + "/muscle/"
-	resp, err := httpClient.Get(url)
+	resp, err := httpClientWger.Get(url)
 	if err != nil {
 		return 0, err
 	}
@@ -57,12 +57,12 @@ func GetMuscleID(muscleName string) (int, error) {
 			return
 		}
 	}(resp.Body)
-
+	
 	var data models.MuscleResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return 0, err
 	}
-
+	
 	cacheSet("muscles", data.Results)
 	return findMuscleID(data.Results, muscleName)
 }
@@ -73,7 +73,7 @@ func findMuscleID(muscles []models.Muscle, muscleName string) (int, error) {
 			return m.ID, nil
 		}
 	}
-
+	
 	return 0, fmt.Errorf("muscle not found")
 }
 
@@ -82,40 +82,48 @@ func GetExercisesByMuscle(muscleID int) ([]models.Exercise, error) {
 	if v, ok := cacheGet(cacheKey); ok {
 		return v.([]models.Exercise), nil
 	}
-
+	
 	url := fmt.Sprintf("%s/exercise/?muscles=%d&language=2&status=2", wgerURL, muscleID)
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
-
+	
 	defer func(Body io.ReadCloser) {
 		err := resp.Body.Close()
 		if err != nil {
 			return
 		}
 	}(resp.Body)
-
+	
 	var data models.ExerciseResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
-
+	
 	cacheSet(cacheKey, data.Results)
 	return data.Results, nil
 }
 
-func GetSimilarMuscles(muscleName string) []string {
-	similar := map[string][]string{
-		"biceps":  {"forearms", "brachialis"},
-		"triceps": {"shoulders", "chest"},
-		"quads":   {"hamstrings", "glutes", "soleus"},
-		"lats":    {"trapezius", "serratus anterior"},
-		"abs":     {"rectus abdominis", "obliquus externus abdominis"},
+func GetSimilarMuscles(muscleName string) (res []string) {
+	similar := map[string][]string{}
+	data, err := os.ReadFile("similar_muscles.json")
+	if err != nil {
+		return nil
+	}
+	err = json.Unmarshal(data, &similar)
+	if err != nil {
+		return nil
 	}
 	if v, ok := similar[strings.ToLower(muscleName)]; ok {
 		return v
 	}
-	return []string{"back", "core"}
+	return nil
 }
+
+//"biceps":  {"forearms", "brachialis"},
+//		"triceps": {"shoulders", "chest"},
+//		"quads":   {"hamstrings", "glutes", "soleus"},
+//		"lats":    {"trapezius", "serratus anterior"},
+//		"abs":     {"rectus abdominis", "obliquus externus abdominis"},

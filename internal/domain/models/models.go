@@ -25,5 +25,6 @@ type ExerciseOut struct {
 }
 
 type AdviceResponse struct {
+	ID
 	Advice string `json:"advice"`
 }
